@@ -31,8 +31,8 @@ __global__ void gemm_kernel_shared(
     int M, int K, int N) {
     
     const int TILE_SIZE = 32;
-    __shared__ scalar_t As[32][32];
-    __shared__ scalar_t Bs[32][32];
+    __shared__ scalar_t As[TILE_SIZE][TILE_SIZE];
+    __shared__ scalar_t Bs[TILE_SIZE][TILE_SIZE];
     
     int row = blockIdx.y * TILE_SIZE + threadIdx.y;
     int col = blockIdx.x * TILE_SIZE + threadIdx.x;

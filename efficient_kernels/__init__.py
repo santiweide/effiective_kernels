@@ -29,10 +29,15 @@ def _get_jit_extension():
         str(package_dir / 'csrc' / 'kernels' / 'gemm.cu'),
     ]
     
+    # Use consistent compile flags with setup.py
+    extra_cflags = ['-O3']
+    extra_cuda_cflags = ['-O3', '--use_fast_math', '-lineinfo']
+    
     return load(
         name='efficient_kernels_jit',
         sources=source_files,
-        extra_cuda_cflags=['-O3', '--use_fast_math', '-lineinfo'],
+        extra_cflags=extra_cflags,
+        extra_cuda_cflags=extra_cuda_cflags,
         verbose=True
     )
 
