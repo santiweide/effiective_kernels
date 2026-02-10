@@ -1,5 +1,10 @@
 # Quick Start Guide 快速入门
 
+hendrix 
+```shell
+module load gcc/11.2.0
+```
+
 ## 5分钟上手 Get Started in 5 Minutes
 
 ### 1️⃣ 克隆并进入仓库 Clone and Enter Repository

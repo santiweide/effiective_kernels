@@ -79,4 +79,70 @@ def gemm(A: torch.Tensor, B: torch.Tensor, use_shared: bool = True) -> torch.Ten
     ext = _get_extension()
     return ext.gemm(A, B, use_shared)
 
-__all__ = ['gemm', '__version__']
+
+def gemm_splitk(A: torch.Tensor, B: torch.Tensor, k_splits: int = 4) -> torch.Tensor:
+    """
+    Perform matrix multiplication C = A @ B using Split-K parallelization.
+    
+    Split-K divides the K dimension into multiple chunks, processes them in 
+    parallel across different thread blocks, and reduces the partial results.
+    
+    This is beneficial when:
+    - K is very large compared to M and N
+    - The output tile count is small (not enough parallelism in M*N)
+    
+    Args:
+        A: Input tensor of shape [M, K]
+        B: Input tensor of shape [K, N]
+        k_splits: Number of K-dimension splits (default: 4)
+        
+    Returns:
+        Output tensor C of shape [M, N]
+        
+    Example:
+        >>> import torch
+        >>> import efficient_kernels as ek
+        >>> A = torch.randn(64, 4096).cuda()  # Small M, large K
+        >>> B = torch.randn(4096, 64).cuda()
+        >>> C = ek.gemm_splitk(A, B, k_splits=8)
+    """
+    ext = _get_extension()
+    return ext.gemm_splitk(A, B, k_splits)
+
+
+def gemm_streamk(A: torch.Tensor, B: torch.Tensor, k_splits: int = 4) -> torch.Tensor:
+    """
+    Perform matrix multiplication C = A @ B using StreamK-style parallelization.
+    
+    StreamK-style approach:
+    - Multiple blocks work on the same output tile along K dimension
+    - Uses atomic operations to accumulate partial results
+    - Better load balancing compared to traditional tiled GEMM
+    
+    Best for:
+    - Irregular matrix sizes where traditional tiling leaves SMs underutilized
+    - When K >> M*N (computation bound in K dimension)
+    
+    Args:
+        A: Input tensor of shape [M, K]
+        B: Input tensor of shape [K, N]
+        k_splits: Number of K-dimension splits (default: 4)
+        
+    Returns:
+        Output tensor C of shape [M, N]
+        
+    Note:
+        Uses atomicAdd which may have performance overhead on older GPUs.
+        
+    Example:
+        >>> import torch
+        >>> import efficient_kernels as ek
+        >>> A = torch.randn(32, 8192).cuda()
+        >>> B = torch.randn(8192, 32).cuda()
+        >>> C = ek.gemm_streamk(A, B, k_splits=4)
+    """
+    ext = _get_extension()
+    return ext.gemm_streamk(A, B, k_splits)
+
+
+__all__ = ['gemm', 'gemm_splitk', 'gemm_streamk', '__version__']
