@@ -76,5 +76,67 @@ def main():
     max_diff = torch.max(torch.abs(C_no_shared - C_torch))
     print(f"Max difference (no shared): {max_diff.item():.6e}")
 
+    # =========================================================================
+    # StreamK GEMM Profile
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("StreamK GEMM Profile")
+    print("=" * 60)
+    
+    # Warm up StreamK
+    print("\nWarming up StreamK...")
+    for _ in range(10):
+        _ = ek.gemm_streamk(A, B, k_splits=4)
+    torch.cuda.synchronize()
+    
+    # Test different k_splits values
+    k_splits_list = [1, 2, 4, 8]
+    streamk_results = {}
+    
+    for k_splits in k_splits_list:
+        start.record()
+        for _ in range(100):
+            C_streamk = ek.gemm_streamk(A, B, k_splits=k_splits)
+        end.record()
+        torch.cuda.synchronize()
+        streamk_time = start.elapsed_time(end) / 100
+        streamk_results[k_splits] = streamk_time
+        
+        # Verify correctness
+        max_diff = torch.max(torch.abs(C_streamk - C_torch))
+        print(f"StreamK (k_splits={k_splits}): {streamk_time:.4f} ms, "
+              f"max_diff: {max_diff.item():.6e}")
+    
+    # Also benchmark Split-K
+    print("\n" + "-" * 40)
+    print("Split-K GEMM Profile")
+    print("-" * 40)
+    
+    for k_splits in k_splits_list:
+        start.record()
+        for _ in range(100):
+            C_splitk = ek.gemm_splitk(A, B, k_splits=k_splits)
+        end.record()
+        torch.cuda.synchronize()
+        splitk_time = start.elapsed_time(end) / 100
+        
+        # Verify correctness
+        max_diff = torch.max(torch.abs(C_splitk - C_torch))
+        print(f"Split-K (k_splits={k_splits}): {splitk_time:.4f} ms, "
+              f"max_diff: {max_diff.item():.6e}")
+    
+    # Summary comparison
+    print("\n" + "=" * 60)
+    print("Performance Summary")
+    print("=" * 60)
+    print(f"{'Method':<25} {'Time (ms)':<15} {'vs PyTorch':<15}")
+    print("-" * 55)
+    print(f"{'PyTorch matmul':<25} {torch_time:<15.4f} {'1.00x':<15}")
+    print(f"{'Custom GEMM (shared)':<25} {custom_time:<15.4f} {torch_time/custom_time:<15.2f}x")
+    best_streamk = min(streamk_results.values())
+    best_k = min(streamk_results, key=streamk_results.get)
+    print(f"{'StreamK (best k=' + str(best_k) + ')':<25} {best_streamk:<15.4f} {torch_time/best_streamk:<15.2f}x")
+    print("=" * 60)
+
 if __name__ == "__main__":
     main()

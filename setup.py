@@ -35,6 +35,13 @@ setup(
                 'csrc/kernels/gemm.cu',
             ],
             extra_compile_args=extra_compile_args,
+        ),
+        cpp_extension.CUDAExtension(
+            name='efficient_kernels._C_optimized',
+            sources=[
+                'csrc/kernels/gemm_optimized.cu',
+            ],
+            extra_compile_args=extra_compile_args,
         )
     ],
     cmdclass={
