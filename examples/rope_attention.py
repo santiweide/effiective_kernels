@@ -73,88 +73,57 @@ class CausalSelfAttention(nn.Module):
         self.n_head = n_head
         self.head_dim = d_model // n_head
         
-        # 线性投影
+        # Linear Projection
         self.wq = nn.Linear(d_model, d_model, bias=False)
         self.wk = nn.Linear(d_model, d_model, bias=False)
         self.wv = nn.Linear(d_model, d_model, bias=False)
         self.wo = nn.Linear(d_model, d_model, bias=False)
         
-        # 预计算 RoPE 的 cos/sin 表 (缓存起来，避免重复计算)
         freqs = precompute_freqs_cis(self.head_dim, max_seq_len * 2)
         self.register_buffer("freqs_cos", torch.cos(freqs), persistent=False)
         self.register_buffer("freqs_sin", torch.sin(freqs), persistent=False)
 
     def forward(self, x, kv_cache=None, start_pos=0):
-        """
-        x: [batch, seq_len, d_model] -> 当前输入的 token embedding
-        kv_cache: Tuple(past_k, past_v) -> 历史缓存
-        start_pos: int -> 当前 x 在整个序列中的起始位置 (用于 RoPE)
-        """
+
         b, seq_len, _ = x.shape
-        
-        # 1. 投影 Q, K, V
         xq = self.wq(x)
+        #         
         xk = self.wk(x)
         xv = self.wv(x)
         
-        # Reshape 为 [batch, seq_len, n_head, head_dim]
         xq = xq.view(b, seq_len, self.n_head, self.head_dim)
         xk = xk.view(b, seq_len, self.n_head, self.head_dim)
         xv = xv.view(b, seq_len, self.n_head, self.head_dim)
         
-        # 2. 准备 RoPE 所需的频率
-        # 根据 start_pos 切片取出当前 token 对应的旋转角度
-        # end_pos = start_pos + seq_len
         cos = self.freqs_cos[start_pos : start_pos + seq_len]
         sin = self.freqs_sin[start_pos : start_pos + seq_len]
         
-        # 调整维度以支持广播 [seq_len, head_dim/2] -> [1, seq_len, 1, head_dim]
-        # 注意：RoPE通常作用于 head_dim 维度，sin/cos 需要 repeat 两次匹配 head_dim
-        # (这步通常会有优化，这里为了逻辑清晰显式写出)
         cos = torch.cat([cos, cos], dim=-1).view(1, seq_len, 1, self.head_dim)
         sin = torch.cat([sin, sin], dim=-1).view(1, seq_len, 1, self.head_dim)
         
-        # 3. 应用 RoPE (只旋转当前的 Q 和 K)
-        # !!! 关键点：我们不需要重新旋转 Cache 里的旧 K，因为它们的绝对位置没变 !!!
         xq, xk = apply_rotary_emb(xq, xk, (cos, sin))
         
-        # 4. KV Cache 管理
         if kv_cache is not None:
             past_k, past_v = kv_cache
-            # 将新的(已旋转的) K 和新的 V 拼接到 Cache 后面
             xk = torch.cat([past_k, xk], dim=1)
             xv = torch.cat([past_v, xv], dim=1)
             
-        # 更新后的 Cache (返回给外部循环使用)
         current_cache = (xk, xv)
-        
-        # 5. 计算 Attention
-        # Q shape: [b, seq_len(新), n_head, head_dim]
-        # K shape: [b, seq_len(总), n_head, head_dim]
-        
-        # 转置用于点积: [b, n_head, seq_len, head_dim]
+
         xq = xq.transpose(1, 2) 
         xk = xk.transpose(1, 2)
         xv = xv.transpose(1, 2)
         
-        # Scores: [b, n_head, seq_len(新), seq_len(总)]
         scores = torch.matmul(xq, xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        
-        # Masking (因果掩码)
-        # 如果是 Prefill 阶段 (seq_len > 1)，需要 mask 掉未来的 token
-        # 如果是 Decode 阶段 (seq_len == 1)，通常不需要 mask，因为只能看到过去所有的
         if seq_len > 1:
-            # 创建一个 mask: [1, 1, seq_len(新), seq_len(总)]
             mask = torch.triu(torch.ones(seq_len, xk.shape[2]), diagonal=start_pos+1).bool()
             mask = mask.to(x.device)
             scores = scores.masked_fill(mask, float('-inf'))
             
         attn_weights = F.softmax(scores, dim=-1)
         
-        # Output: [b, n_head, seq_len(新), head_dim]
         output = torch.matmul(attn_weights, xv)
         
-        # 还原形状
         output = output.transpose(1, 2).contiguous().view(b, seq_len, self.d_model)
         return self.wo(output), current_cache
 

@@ -125,6 +125,83 @@ def main():
         print(f"Split-K (k_splits={k_splits}): {splitk_time:.4f} ms, "
               f"max_diff: {max_diff.item():.6e}")
     
+    # =========================================================================
+    # Optimized GEMM Kernels (No Atomics, Reduced Register Pressure)
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("Optimized GEMM Kernels")
+    print("=" * 60)
+    
+    optimized_results = {}
+    
+    # Test gemm_optimized_v1 (2x2 per thread)
+    try:
+        # Warm up
+        for _ in range(10):
+            _ = ek.gemm_optimized_v1(A, B)
+        torch.cuda.synchronize()
+        
+        start.record()
+        for _ in range(100):
+            C_opt_v1 = ek.gemm_optimized_v1(A, B)
+        end.record()
+        torch.cuda.synchronize()
+        opt_v1_time = start.elapsed_time(end) / 100
+        optimized_results['v1'] = opt_v1_time
+        
+        max_diff = torch.max(torch.abs(C_opt_v1 - C_torch))
+        print(f"Optimized V1 (2x2/thread): {opt_v1_time:.4f} ms, "
+              f"max_diff: {max_diff.item():.6e}")
+    except Exception as e:
+        print(f"Optimized V1: Not available ({e})")
+    
+    # Test gemm_optimized_v2 (4x4 per thread)
+    try:
+        for _ in range(10):
+            _ = ek.gemm_optimized_v2(A, B)
+        torch.cuda.synchronize()
+        
+        start.record()
+        for _ in range(100):
+            C_opt_v2 = ek.gemm_optimized_v2(A, B)
+        end.record()
+        torch.cuda.synchronize()
+        opt_v2_time = start.elapsed_time(end) / 100
+        optimized_results['v2'] = opt_v2_time
+        
+        max_diff = torch.max(torch.abs(C_opt_v2 - C_torch))
+        print(f"Optimized V2 (4x4/thread): {opt_v2_time:.4f} ms, "
+              f"max_diff: {max_diff.item():.6e}")
+    except Exception as e:
+        print(f"Optimized V2: Not available ({e})")
+    
+    # Test gemm_splitk_v2 (no atomics)
+    print("\n" + "-" * 40)
+    print("Split-K V2 (No Atomics)")
+    print("-" * 40)
+    
+    splitk_v2_results = {}
+    try:
+        for k_splits in k_splits_list:
+            # Warm up
+            for _ in range(5):
+                _ = ek.gemm_splitk_v2(A, B, k_splits=k_splits)
+            torch.cuda.synchronize()
+            
+            start.record()
+            for _ in range(100):
+                C_splitk_v2 = ek.gemm_splitk_v2(A, B, k_splits=k_splits)
+            end.record()
+            torch.cuda.synchronize()
+            splitk_v2_time = start.elapsed_time(end) / 100
+            splitk_v2_results[k_splits] = splitk_v2_time
+            
+            max_diff = torch.max(torch.abs(C_splitk_v2 - C_torch))
+            print(f"Split-K V2 (k_splits={k_splits}): {splitk_v2_time:.4f} ms, "
+                  f"max_diff: {max_diff.item():.6e}")
+    except Exception as e:
+        print(f"Split-K V2: Not available ({e})")
+    
     # Summary comparison
     print("\n" + "=" * 60)
     print("Performance Summary")
@@ -136,6 +213,16 @@ def main():
     best_streamk = min(streamk_results.values())
     best_k = min(streamk_results, key=streamk_results.get)
     print(f"{'StreamK (best k=' + str(best_k) + ')':<25} {best_streamk:<15.4f} {torch_time/best_streamk:<15.2f}x")
+    
+    # Add optimized results to summary
+    if 'v1' in optimized_results:
+        print(f"{'Optimized V1 (2x2)':<25} {optimized_results['v1']:<15.4f} {torch_time/optimized_results['v1']:<15.2f}x")
+    if 'v2' in optimized_results:
+        print(f"{'Optimized V2 (4x4)':<25} {optimized_results['v2']:<15.4f} {torch_time/optimized_results['v2']:<15.2f}x")
+    if splitk_v2_results:
+        best_splitk_v2 = min(splitk_v2_results.values())
+        best_k_v2 = min(splitk_v2_results, key=splitk_v2_results.get)
+        print(f"{'Split-K V2 (k=' + str(best_k_v2) + ')':<25} {best_splitk_v2:<15.4f} {torch_time/best_splitk_v2:<15.2f}x")
     print("=" * 60)
 
 if __name__ == "__main__":
